@@ -1,9 +1,9 @@
-﻿using AspectCore.DynamicProxy;
+﻿using Coldairarrow.Util;
 using System;
 
-namespace Coldairarrow.Util
+namespace Coldairarrow.Business
 {
-    public abstract class WriteDataLogAttribute : AbstractInterceptorAttribute
+    public abstract class WriteDataLogAttribute : BaseAOPAttribute
     {
         public WriteDataLogAttribute(UserLogType logType, string nameField, string dataName)
         {

@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using Castle.DynamicProxy;
 using Microsoft.Extensions.DependencyInjection;
 using System;
 using System.Collections.Generic;
@@ -12,11 +13,14 @@ namespace Coldairarrow.Util
     /// </summary>
     public static partial class Extention
     {
+        private static readonly ProxyGenerator _generator = new ProxyGenerator();
+
         /// <summary>
         /// 使用AutoMapper自动映射拥有MapAttribute的类
         /// </summary>
         /// <param name="services">服务集合</param>
-        public static IServiceCollection AddAutoMapper(this IServiceCollection services)
+        /// <param name="configure">自定义配置</param>
+        public static IServiceCollection AddAutoMapper(this IServiceCollection services, Action<IMapperConfigurationExpression> configure = null)
         {
             List<(Type from, Type[] targets)> maps = new List<(Type from, Type[] targets)>();
 
@@ -27,14 +31,22 @@ namespace Coldairarrow.Util
             {
                 maps.ForEach(aMap =>
                 {
-                    aMap.targets.ForEach(aTarget =>
+                    aMap.targets.ToList().ForEach(aTarget =>
                     {
-                        cfg.CreateMap(aMap.from, aTarget);
-                        cfg.CreateMap(aTarget, aMap.from);
+                        cfg.CreateMap(aMap.from, aTarget).IgnoreAllNonExisting(aMap.from, aTarget).ReverseMap();
                     });
                 });
+
+                cfg.AddMaps(GlobalData.AllFxAssemblies);
+
+                //自定义映射
+                configure?.Invoke(cfg);
             });
 
+#if DEBUG
+            //只在Debug时检查配置
+            configuration.AssertConfigurationIsValid();
+#endif
             services.AddSingleton(configuration.CreateMapper());
 
             return services;
@@ -47,57 +59,86 @@ namespace Coldairarrow.Util
         /// <returns></returns>
         public static IServiceCollection AddFxServices(this IServiceCollection services)
         {
-            Dictionary<Type, string> map = new Dictionary<Type, string>
+            Dictionary<Type, ServiceLifetime> lifeTimeMap = new Dictionary<Type, ServiceLifetime>
             {
-                { typeof(ITransientDependency),"AddTransient"},
-                { typeof(IScopeDependency),"AddScoped"},
-                { typeof(ISingletonDependency),"AddSingleton"}
+                { typeof(ITransientDependency), ServiceLifetime.Transient},
+                { typeof(IScopedDependency),ServiceLifetime.Scoped},
+                { typeof(ISingletonDependency),ServiceLifetime.Singleton}
             };
 
             GlobalData.AllFxTypes.ForEach(aType =>
             {
-                map.ForEach(aMap =>
+                lifeTimeMap.ToList().ForEach(aMap =>
                 {
                     var theDependency = aMap.Key;
                     if (theDependency.IsAssignableFrom(aType) && theDependency != aType && !aType.IsAbstract && aType.IsClass)
                     {
+                        //注入实现
+                        services.Add(new ServiceDescriptor(aType, aType, aMap.Value));
+
                         var interfaces = GlobalData.AllFxTypes.Where(x => x.IsAssignableFrom(aType) && x.IsInterface && x != theDependency).ToList();
                         //有接口则注入接口
                         if (interfaces.Count > 0)
                         {
-                            var method = GetMethodInfo(aMap.Value, 2);
-
                             interfaces.ForEach(aInterface =>
                             {
-                                method.Invoke(null, new object[] { services, aInterface, aType });
+                                //注入AOP
+                                services.Add(new ServiceDescriptor(aInterface, serviceProvider =>
+                                {
+                                    CastleInterceptor castleInterceptor = new CastleInterceptor(serviceProvider);
+
+                                    return _generator.CreateInterfaceProxyWithTarget(aInterface, serviceProvider.GetService(aType), castleInterceptor);
+                                }, aMap.Value));
                             });
                         }
                         //无接口则注入自己
                         else
                         {
-                            var method = GetMethodInfo(aMap.Value, 1);
-                            method.Invoke(null, new object[] { services, aType });
+                            services.Add(new ServiceDescriptor(aType, aType, aMap.Value));
                         }
                     }
                 });
             });
 
             return services;
+        }
 
-            MethodInfo GetMethodInfo(string name, int count)
+        /// <summary>
+        /// 忽略所有不匹配的属性。
+        /// </summary>
+        /// <param name="expression">配置表达式</param>
+        /// <param name="from">源类型</param>
+        /// <param name="to">目标类型</param>
+        /// <returns></returns>
+        public static IMappingExpression IgnoreAllNonExisting(this IMappingExpression expression, Type from, Type to)
+        {
+            var flags = BindingFlags.Public | BindingFlags.Instance;
+            to.GetProperties(flags).Where(x => from.GetProperty(x.Name, flags) == null).ForEach(aProperty =>
             {
-                List<Type> types = new List<Type>();
-                LoopHelper.Loop(count, () => types.Add(typeof(Type)));
+                expression.ForMember(aProperty.Name, opt => opt.Ignore());
+            });
 
-                var method = typeof(ServiceCollectionServiceExtensions)
-                    .GetMethods(BindingFlags.Public | BindingFlags.Static)
-                    .Where(x => x.Name == name
-                        && !x.IsGenericMethod
-                        && x.GetParameters().Count() == count + 1)
-                    .FirstOrDefault();
+            return expression;
+        }
 
-                return method;
-            }
+        /// <summary>
+        /// 忽略所有不匹配的属性。
+        /// </summary>
+        /// <typeparam name="TSource">源类型</typeparam>
+        /// <typeparam name="TDestination">目标类型</typeparam>
+        /// <param name="expression">配置表达式</param>
+        /// <returns></returns>
+        public static IMappingExpression<TSource, TDestination> IgnoreAllNonExisting<TSource, TDestination>(this IMappingExpression<TSource, TDestination> expression)
+        {
+            Type from = typeof(TSource);
+            Type to = typeof(TDestination);
+            var flags = BindingFlags.Public | BindingFlags.Instance;
+            to.GetProperties(flags).Where(x => from.GetProperty(x.Name, flags) == null).ForEach(aProperty =>
+            {
+                expression.ForMember(aProperty.Name, opt => opt.Ignore());
+            });
+
+            return expression;
         }
     }
 }

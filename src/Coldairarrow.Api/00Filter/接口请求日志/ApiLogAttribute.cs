@@ -1,6 +1,5 @@
 ﻿using Coldairarrow.Util;
 using Microsoft.AspNetCore.Http;
-using Microsoft.AspNetCore.Http.Extensions;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.AspNetCore.Mvc.Filters;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,6 +21,11 @@ namespace Coldairarrow.Api
         {
             _requesTime[context.HttpContext] = DateTime.Now;
 
+            var request = context.HttpContext.Request;
+            request.EnableBuffering();
+            string body = await request.Body?.ReadToStringAsync(Encoding.UTF8);
+            Console.WriteLine(body);
+
             await Task.CompletedTask;
         }
 
@@ -31,6 +35,8 @@ namespace Coldairarrow.Api
             _requesTime.TryRemove(context.HttpContext, out _);
 
             var request = context.HttpContext.Request;
+            request.EnableBuffering();
+            string body = await request.Body?.ReadToStringAsync(Encoding.UTF8);
             string resContent = string.Empty;
             if (context.Result is ContentResult result)
                 resContent = result.Content;
@@ -41,19 +47,26 @@ namespace Coldairarrow.Api
                 resContent += "......";
             }
 
-            request.EnableBuffering();
             string log =
-$@"方向:请求本系统
-url:{request.GetDisplayUrl()}
-method:{request.Method}
-contentType:{request.ContentType}
-body:{await request.Body?.ReadToStringAsync(Encoding.UTF8)}
-耗时:{(int)time.TotalMilliseconds}ms
+@"方向:请求本系统
+Url:{Url}
+Time:{Time}ms
+Method:{Method}
+ContentType:{ContentType}
+Body:{Body}
 
-返回:{resContent}
+Response:{Response}
 ";
             var logger = context.HttpContext.RequestServices.GetService<ILogger<ApiLogAttribute>>();
-            logger.LogInformation(log);
+            logger.LogInformation(
+                log,
+                request.Path,
+                (int)time.TotalMilliseconds,
+                request.Method,
+                request.ContentType,
+                body,
+                resContent
+                );
 
             await Task.CompletedTask;
         }

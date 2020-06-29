@@ -1,4 +1,5 @@
 ﻿using Coldairarrow.Entity.Base_Manage;
+using Coldairarrow.Util;
 using EFCore.Sharding;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -11,8 +12,8 @@ namespace Coldairarrow.Api.Controllers
     [Route("/[controller]/[action]")]
     public class TestController : BaseController
     {
-        readonly IRepository _repository;
-        public TestController(IRepository repository)
+        readonly IDbAccessor _repository;
+        public TestController(IDbAccessor repository)
         {
             _repository = repository;
         }
@@ -37,6 +38,12 @@ namespace Coldairarrow.Api.Controllers
             await _repository.UpdateAsync(base_User);
             await _repository.GetIQueryable<Base_User>().Where(x => x.Id == base_User.Id).FirstOrDefaultAsync();
             await _repository.DeleteAsync(base_User);
+        }
+
+        [HttpGet]
+        public async Task<PageResult<Base_UserLog>> GetLogList()
+        {
+            return await _repository.GetIQueryable<Base_UserLog>().GetPageResultAsync(new PageInput());
         }
     }
 }

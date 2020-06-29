@@ -1,6 +1,8 @@
 ﻿using AutoMapper;
 using Coldairarrow.Business.Cache;
+using Coldairarrow.Entity;
 using Coldairarrow.Entity.Base_Manage;
+using Coldairarrow.IBusiness;
 using Coldairarrow.Util;
 using EFCore.Sharding;
 using LinqKit;
@@ -18,12 +20,12 @@ namespace Coldairarrow.Business.Base_Manage
         readonly IOperator _operator;
         readonly IMapper _mapper;
         public Base_UserBusiness(
-            IRepository repository,
+            IDbAccessor db,
             IBase_UserCache userCache,
             IOperator @operator,
             IMapper mapper
             )
-            : base(repository)
+            : base(db)
         {
             _userCache = userCache;
             _operator = @operator;
@@ -42,16 +44,13 @@ namespace Coldairarrow.Business.Base_Manage
             };
             var search = input.Search;
             select = select.BuildExtendSelectExpre();
-            var q_User = search.all ? Service.GetIQueryable<Base_User>() : GetIQueryable();
+            var q_User = search.all ? Db.GetIQueryable<Base_User>() : GetIQueryable();
             var q = from a in q_User.AsExpandable()
-                    join b in Service.GetIQueryable<Base_Department>() on a.DepartmentId equals b.Id into ab
+                    join b in Db.GetIQueryable<Base_Department>() on a.DepartmentId equals b.Id into ab
                     from b in ab.DefaultIfEmpty()
                     select @select.Invoke(a, b);
 
-            var where = LinqHelper.True<Base_UserDTO>();
-
-            if (!search.userId.IsNullOrEmpty())
-                where = where.And(x => x.Id == search.userId);
+            q = q.WhereIf(!search.userId.IsNullOrEmpty(), x => x.Id == search.userId);
             if (!search.keyword.IsNullOrEmpty())
             {
                 var keyword = $"%{search.keyword}%";
@@ -60,7 +59,7 @@ namespace Coldairarrow.Business.Base_Manage
                       || EF.Functions.Like(x.RealName, keyword));
             }
 
-            var list = await q.Where(where).GetPageResultAsync(input);
+            var list = await q.GetPageResultAsync(input);
 
             await SetProperty(list.Data);
 
@@ -70,8 +69,8 @@ namespace Coldairarrow.Business.Base_Manage
             {
                 //补充用户角色属性
                 List<string> userIds = users.Select(x => x.Id).ToList();
-                var userRoles = await (from a in Service.GetIQueryable<Base_UserRole>()
-                                       join b in Service.GetIQueryable<Base_Role>() on a.RoleId equals b.Id
+                var userRoles = await (from a in Db.GetIQueryable<Base_UserRole>()
+                                       join b in Db.GetIQueryable<Base_Role>() on a.RoleId equals b.Id
                                        where userIds.Contains(a.UserId)
                                        select new
                                        {
@@ -158,8 +157,8 @@ namespace Coldairarrow.Business.Base_Manage
                 UserId = userId,
                 RoleId = x
             }).ToList();
-            await Service.DeleteAsync<Base_UserRole>(x => x.UserId == userId);
-            await Service.InsertAsync(userRoleList);
+            await Db.DeleteAsync<Base_UserRole>(x => x.UserId == userId);
+            await Db.InsertAsync(userRoleList);
         }
 
         #endregion
